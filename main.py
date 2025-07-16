@@ -34,15 +34,22 @@ def note_name(n: int) -> str: # type: ignore
         case 11:
             return "B"
 
-def display_chord(chord: Chord):
-    print(f"Playing {note_name(key + chord.root)} {chord.name}")
-    print(f"Current key center: {note_name(key)}{(key // 12 + 1)}")
+def display_key(key: int) -> str:
+    return f"{note_name(key)}{(key // 12 + 1)}"
+
+def display_chord(chord: Chord, key: int) -> str:
+    return f"{note_name(key + chord.root)} {chord.name}"
+
+def display_recent_chords(recent_chords: list[tuple[Chord, int]]) -> str:
+    return f"{display_chord(recent_chords[0][0], recent_chords[0][1])} | {display_chord(recent_chords[1][0], recent_chords[1][1])} | {display_chord(recent_chords[2][0], recent_chords[2][1])}"
 
 def play_chord(chord: Chord, delay: float):
     global tension
     tension += chord.tension
-    display_chord(chord)
-    print(f"tension: {tension}")
+    print(f"\nPlaying", display_chord(chord, key))
+    print("Key:", display_key(key))
+    print(f"Tension:", tension)
+    print(f"Tension rising:", tension_rising)
     for note in chord.notes:
         port.send(mido.Message('note_on', note=(note + key)))
     port.send(mido.Message('note_on', note=0))
@@ -57,45 +64,54 @@ def play_chord(chord: Chord, delay: float):
         port.send(mido.Message('note_off', note=(note + key)))
     sleep(delay / 40)
 
+def too_similar(candidate: tuple[Chord, int], recent_chords: list[tuple[Chord, int]]) -> bool:
+    if candidate == recent_chords[1] and candidate[0].root != 0:
+        return True
+    elif candidate == recent_chords[2] and recent_chords[0] == recent_chords[3]:
+        return True
+    else:
+        return False
+
 def main():
     global tension
+    global tension_rising
     tension = 10 # how high the tension of the music is
-    tension_goal = 0 # how high the tension *should* be; set randomly
-    tension_rising = False # if tension is supposed to be rising
+    tension_rising = True # if tension is supposed to be rising
 
     global key
-    key = 36
-    delay = 15
+    key = randint(30, 36)
+    delay = 9
     chord = IM9
-    recent_chords = [IM9, IM9, IM9]
+    recent_chords = [(IM9, key), (IM9, key), (IM9, key), (IM9, key), (IM9, key)]
     play_chord(chord, delay)
-    while True:
-        if ((tension >= tension_goal) and tension_rising) or ((tension <= tension_goal) and not tension_rising):
-            if tension_rising == True:
-                tension_rising = False
-                tension_goal = randint(0, 10)
-                print(f"\nhigh tension met!\nnew tension goal: {tension_goal}\n")
-            else:
-                tension_rising = True
-                tension_goal = randint(20, 30)
-                print(f"\nlow tension met!\nnew tension goal: {tension_goal}\n")
 
-        next_chord_index = 0
+    while True:
+        offset = 0
         chord_options = len(chord.followups)
         if chord_options > 1:
-            if tension_rising: next_chord_index = 1
+            if tension_rising: offset = 1
             weights = []
             for i in range(chord_options):
                 weights.append((((i + 1) / (chord_options + 1)) - 1) ** 2) # dont even ask
-            next_chord_index += choices(range(chord_options), weights=weights, k=1)[0]
-            next_chord_index %= chord_options
+            while True:
+                next_chord_index = choices(range(chord_options), weights=weights, k=1)[0]
+                next_chord_index += offset
+                next_chord_index %= chord_options
+                if too_similar((chord.followups[next_chord_index], key + chord.followupkeys[next_chord_index]), recent_chords): 
+                    weights[next_chord_index - offset] = 0
+                else: break
         key += chord.followupkeys[next_chord_index]
         chord = chord.followups[next_chord_index]
-        recent_chords.pop()
-        recent_chords.insert(0, chord)
         if key > 38 and (chord == IM7 or chord == IM9):
             key -= 12
             chord = IM_d12
+        
+        recent_chords.pop()
+        recent_chords.insert(0, (chord, key))
+
+        if (tension >= 25 and tension_rising) or ((tension <= 5) and not tension_rising):
+            tension ^= True
+
         play_chord(chord, delay)
 
 # thank you stack overflow
