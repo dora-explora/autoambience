@@ -1,11 +1,14 @@
-import mido
-from time import sleep
-from random import randint, choices
 from chords import *
-import os
-from sys import exit
+import mido
+from random import randint, choices
+import time
+import asyncio
+import urwid
+import threading
+import sys
 
 port = mido.open_output() # type: ignore
+playing = False
 
 def note_name(n: int) -> str: # type: ignore
     match ((n) % 12):
@@ -43,26 +46,27 @@ def display_chord(chord: Chord, key: int) -> str:
 def display_recent_chords(recent_chords: list[tuple[Chord, int]]) -> str:
     return f"{display_chord(recent_chords[0][0], recent_chords[0][1])} | {display_chord(recent_chords[1][0], recent_chords[1][1])} | {display_chord(recent_chords[2][0], recent_chords[2][1])}"
 
-def play_chord(chord: Chord, delay: float):
+async def play_chord(chord: Chord, delay: float):
     global tension
+    current_chord.set_text(f"Currently playing: {display_chord(chord, key)}")
     tension += chord.tension
-    print(f"\nPlaying", display_chord(chord, key))
-    print("Key:", display_key(key))
-    print(f"Tension:", tension)
-    print(f"Tension rising:", tension_rising)
+    # print(f"\nPlaying", display_chord(chord, key))
+    # print("Key:", display_key(key))
+    # print(f"Tension:", tension)
+    # print(f"Tension rising:", tension_rising)
     for note in chord.notes:
         port.send(mido.Message('note_on', note=(note + key)))
     port.send(mido.Message('note_on', note=0))
-    sleep(0.01)
+    await asyncio.sleep(0.01)
     port.send(mido.Message('note_off', note=0))
 
     for pressure in range(128):
         port.send(mido.Message('aftertouch', value=pressure))
-        sleep(delay / 128)
+        await asyncio.sleep(delay / 128)
 
     for note in chord.notes:
         port.send(mido.Message('note_off', note=(note + key)))
-    sleep(delay / 40)
+    await asyncio.sleep(delay / 40)
 
 def too_similar(candidate: tuple[Chord, int], recent_chords: list[tuple[Chord, int]]) -> bool:
     if candidate == recent_chords[1] and candidate[0].root != 0:
@@ -72,20 +76,20 @@ def too_similar(candidate: tuple[Chord, int], recent_chords: list[tuple[Chord, i
     else:
         return False
 
-def main():
+async def play_chords():
     global tension
     global tension_rising
     tension = 10 # how high the tension of the music is
     tension_rising = True # if tension is supposed to be rising
 
     global key
-    key = randint(30, 36)
-    delay = 9
+    key = randint(30, 35)
+    delay = 15
     chord = IM9
     recent_chords = [(IM9, key), (IM9, key), (IM9, key), (IM9, key), (IM9, key)]
-    play_chord(chord, delay)
+    await play_chord(chord, delay)
 
-    while True:
+    while playing:
         offset = 0
         chord_options = len(chord.followups)
         if chord_options > 1:
@@ -112,15 +116,45 @@ def main():
         if (tension >= 25 and tension_rising) or ((tension <= 5) and not tension_rising):
             tension ^= True
 
-        play_chord(chord, delay)
+        await play_chord(chord, delay)
 
-# thank you stack overflow
-try:
-    main()
-except KeyboardInterrupt:
-    print("\nbye!")
-    port.reset()
-    try:
-        exit(130)
-    except SystemExit:
-        os._exit(130)
+def play(loop: asyncio.EventLoop):
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(play_chords())
+
+def on_play_pause_press(button: urwid.Button):
+    global playing
+    loop = asyncio.new_event_loop()
+    if button.label == "Start":
+        button.set_label("Pause")
+        playing = True
+        threading.Thread(target=play, args=(loop,), daemon=True).start()
+    else:
+        button.set_label("Start")
+        playing = False
+        port.reset()
+        current_chord.set_text("Currently playing: None")
+        
+
+def stop():
+    raise urwid.ExitMainLoop
+
+play_pause_button = urwid.Button("Start")
+urwid.connect_signal(play_pause_button, 'click', on_play_pause_press)
+tension_button = urwid.Button("Tension: Fluctuating")
+current_chord = urwid.Text(f"Make sure Vital is open before playing!")
+buttons = urwid.Filler(urwid.Columns([play_pause_button, tension_button]), 'middle', min_height=2)
+filler = urwid.Filler(urwid.Pile([buttons, current_chord]))
+main = urwid.Overlay(
+    filler,
+    urwid.SolidFill("\N{MEDIUM SHADE}"),
+    align=urwid.CENTER,
+    width=(urwid.RELATIVE, 80),
+    valign=urwid.MIDDLE,
+    height=(urwid.RELATIVE, 80),
+    min_width=20,
+)
+
+urwid.MainLoop(main, palette = [("reversed", "standout", "")], unhandled_input = lambda key: stop() if key in ('q', 'Q') else None).run()
+
+port.reset()
