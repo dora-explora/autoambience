@@ -3,12 +3,21 @@ import mido
 from random import randint, choices
 import time
 import asyncio
-import urwid
+from urwid import * # type: ignore
 import threading
 import sys
 
 port = mido.open_output() # type: ignore
 playing = False
+
+tension = 10 # how high the tension of the music is
+tension_rising = True # if tension is supposed to be rising
+tension_oscillating = True
+
+key = randint(30, 35)
+delay = 15
+chord = IM9
+recent_chords = [(IM9, key), (IM9, key), (IM9, key), (IM9, key)]
 
 def note_name(n: int) -> str: # type: ignore
     match ((n) % 12):
@@ -43,17 +52,17 @@ def display_key(key: int) -> str:
 def display_chord(chord: Chord, key: int) -> str:
     return f"{note_name(key + chord.root)} {chord.name}"
 
-def display_recent_chords(recent_chords: list[tuple[Chord, int]]) -> str:
-    return f"{display_chord(recent_chords[0][0], recent_chords[0][1])} | {display_chord(recent_chords[1][0], recent_chords[1][1])} | {display_chord(recent_chords[2][0], recent_chords[2][1])}"
+def update_current_chord(chord: Chord, key: int):
+    current_chord.base_widget.set_text(f"Currently playing: {display_chord(chord, key)}") # type: ignore
+    recent_chord_A.base_widget.set_text(display_chord(recent_chords[1][0], recent_chords[1][1])) # type: ignore
+    recent_chord_B.base_widget.set_text(display_chord(recent_chords[2][0], recent_chords[2][1])) # type: ignore
+    recent_chord_C.base_widget.set_text(display_chord(recent_chords[3][0], recent_chords[3][1])) # type: ignore
 
 async def play_chord(chord: Chord, delay: float):
     global tension
-    current_chord.set_text(f"Currently playing: {display_chord(chord, key)}")
     tension += chord.tension
-    # print(f"\nPlaying", display_chord(chord, key))
-    # print("Key:", display_key(key))
-    # print(f"Tension:", tension)
-    # print(f"Tension rising:", tension_rising)
+    update_current_chord(chord, key)
+    current_chord.base_widget._invalidate()
     for note in chord.notes:
         port.send(mido.Message('note_on', note=(note + key)))
     port.send(mido.Message('note_on', note=0))
@@ -77,19 +86,11 @@ def too_similar(candidate: tuple[Chord, int], recent_chords: list[tuple[Chord, i
         return False
 
 async def play_chords():
-    global tension
-    global tension_rising
-    tension = 10 # how high the tension of the music is
-    tension_rising = True # if tension is supposed to be rising
-
+    global chord
     global key
-    key = randint(30, 35)
-    delay = 15
-    chord = IM9
-    recent_chords = [(IM9, key), (IM9, key), (IM9, key), (IM9, key), (IM9, key)]
+    global tension
     await play_chord(chord, delay)
-
-    while playing:
+    while True:
         offset = 0
         chord_options = len(chord.followups)
         if chord_options > 1:
@@ -112,17 +113,19 @@ async def play_chords():
         
         recent_chords.pop()
         recent_chords.insert(0, (chord, key))
-
-        if (tension >= 25 and tension_rising) or ((tension <= 5) and not tension_rising):
-            tension ^= True
+        
+        if tension_oscillating:
+            if (tension >= 25 and tension_rising) or ((tension <= 5) and not tension_rising): tension ^= True
 
         await play_chord(chord, delay)
+
+        if playing == False: break
 
 def play(loop: asyncio.EventLoop):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(play_chords())
 
-def on_play_pause_press(button: urwid.Button):
+def on_play_pause_press(button: Button):
     global playing
     loop = asyncio.new_event_loop()
     if button.label == "Start":
@@ -132,29 +135,75 @@ def on_play_pause_press(button: urwid.Button):
     else:
         button.set_label("Start")
         playing = False
-        port.reset()
-        current_chord.set_text("Currently playing: None")
+        # port.reset()
+        current_chord.base_widget.set_text("Currently playing: None") # type: ignore
         
+def on_tension_press(button: Button):
+    global tension_rising
+    global tension_oscillating
+    if button.label == "Tension: High":
+        tension_rising = False
+        button.set_label("Tension: Low")
+    elif button.label == "Tension: Low":
+        tension_rising = True
+        button.set_label("Tension: Oscillating")
+    elif button.label == "Tension: Oscillating":
+        tension_rising = True
+        tension_oscillating = False
+        button.set_label("Tension: High")
+
+def on_speed_press(button: Button):
+    global delay
+    if button.label == "Speed: 9 s/c":
+        delay = 12
+        button.set_label("Speed: 12 s/c")
+    elif button.label == "Speed: 12 s/c":
+        delay = 15
+        button.set_label("Speed: 15 s/c")
+    elif button.label == "Speed: 15 s/c":
+        delay = 18
+        button.set_label("Speed: 18 s/c")
+    elif button.label == "Speed: 18 s/c":
+        delay = 21
+        button.set_label("Speed: 21 s/c")
+    elif button.label == "Speed: 21 s/c":
+        delay = 9
+        button.set_label("Speed: 9 s/c")
 
 def stop():
-    raise urwid.ExitMainLoop
+    raise ExitMainLoop
 
-play_pause_button = urwid.Button("Start")
-urwid.connect_signal(play_pause_button, 'click', on_play_pause_press)
-tension_button = urwid.Button("Tension: Fluctuating")
-current_chord = urwid.Text(f"Make sure Vital is open before playing!")
-buttons = urwid.Filler(urwid.Columns([play_pause_button, tension_button]), 'middle', min_height=2)
-filler = urwid.Filler(urwid.Pile([buttons, current_chord]))
-main = urwid.Overlay(
-    filler,
-    urwid.SolidFill("\N{MEDIUM SHADE}"),
-    align=urwid.CENTER,
-    width=(urwid.RELATIVE, 80),
-    valign=urwid.MIDDLE,
-    height=(urwid.RELATIVE, 80),
-    min_width=20,
+title = Padding(Text("Welcome to AutoAmbience!\nTo quit, press 'q', and then exit Vital.", 'center'), 'center', 'pack')
+
+play_pause_button = Button("Start", on_play_pause_press, align='center')
+tension_button = Button("Tension: Oscillating", on_tension_press, align='center')
+speed_button = Button("Speed: 15 s/c", on_speed_press, align='center')
+current_chord = Padding(Text(f"Make sure Vital is open before playing!", 'center'), 'center', 'pack')
+recent_chord_A = Padding(AttrMap(Text(f"", 'center'), 'recent'), 'center', 'pack')
+recent_chord_B = Padding(AttrMap(Text(f"Recently played chords go here!", 'center'), 'recent'), 'center', 'pack')
+recent_chord_C = Padding(AttrMap(Text(f"", 'center'), 'recent'), 'center', 'pack')
+buttons = Columns([play_pause_button, tension_button, speed_button], 2)
+
+divider = Divider('-', 1, 1)
+pile = Pile([title, divider, buttons, divider, current_chord, recent_chord_A, recent_chord_B, recent_chord_C])
+
+main = Overlay(
+    Filler(Padding(pile, 'center', 'pack', left=2, right=2)),
+    SolidFill('#'),
+    align=CENTER,
+    width=(RELATIVE, 100),
+    valign=MIDDLE,
+    height=(RELATIVE, 100),
+    left=1,
+    right=1,
+    top=1,
+    bottom=1
 )
 
-urwid.MainLoop(main, palette = [("reversed", "standout", "")], unhandled_input = lambda key: stop() if key in ('q', 'Q') else None).run()
+palette = [
+    ('recent', 'dark gray',  'default'),
+]
+
+main_loop = MainLoop(main, palette = palette, unhandled_input = lambda key: stop() if key in ('q', 'Q') else None).run()
 
 port.reset()
