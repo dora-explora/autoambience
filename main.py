@@ -1,4 +1,3 @@
-from chords import *
 import mido
 from random import randint, choices
 import time
@@ -6,6 +5,45 @@ import asyncio
 from urwid import * # type: ignore
 import threading
 import sys
+
+class Chord:
+    def __init__(self, name: str, root: int, notes: list[int], tension: int, keychange: int):
+        self.name = name
+        self.root = root
+        self.notes = notes
+        self.tension = tension
+        self.keychange = keychange
+        self.followups = [] # chords that would work well directly after
+        self.followupkeys = [] # the changes in key center that those followups would cause
+
+    def set_followups(self, followups: list['Chord']):
+        self.followups = followups
+        self.followupkeys = []
+        for chord in followups:
+            self.followupkeys.append(chord.keychange)
+
+IM9 = Chord("major 9", 0, [0, 12, 19, 23, 26, 33, 38], -10, 0) # base I major 9 to start the song with
+iim7 = Chord("minor 7", 2, [2, 9, 17, 24, 29, 33, 36, 43], +2, 0) # simple ii minor 7 to move the song along
+IVM69_u3 = Chord("major 6-9, raising the key by a minor third", 5, [5, 12, 21, 26, 33, 36, 38, 40, 43], +11, +3) # IV major 6 that comes with a jump 3 tones up in key center
+VM6_sii = Chord("major 6 / ii, setting up a ii-V-I", 7, [2, 7, 14, 19, 23, 28, 31, 35, 38, 40], +5, 0)
+IM7 = Chord("major 7 with the 3rd on top", 0, [0, 7, 12, 16, 19, 23, 24, 28, 31, 35, 36, 40], -8, 0)
+IM_d12 = Chord("major 7, pushing  the key down an octave", 0, [0, 12, 19, 24, 31, 35, 36, 40, 43, 47], -6, -12)
+IVM7 = Chord("major 7", 5, [5, 12, 17, 24, 28, 29, 33, 35, 36, 40, 41, 45], -3, 0)
+III7 = Chord("dominant 7, setting up a IV-III-I", 4, [4, 11, 16, 23, 26, 28, 32, 35, 38, 40, 44], +14, 0)
+IM9_u5 = Chord("major 9, raising the key by a fourth", 0, [0, 7, 12, 19, 23, 26, 28, 31, 35, 38], -4, +5)
+
+
+IM9.set_followups([IVM7, iim7])
+iim7.set_followups([VM6_sii, IVM69_u3])
+VM6_sii.set_followups([IM7, IVM69_u3])
+IM7.set_followups([IVM7, iim7])
+
+IVM7.set_followups([IM7, III7])
+III7.set_followups([IM7, IM9_u5, iim7])
+IM9_u5.set_followups([IM9, IM7, iim7])
+
+IVM69_u3.set_followups([IM9, IM7])
+IM_d12.set_followups([IVM7, iim7, IVM69_u3])
 
 port = mido.open_output() # type: ignore
 playing = False
@@ -90,7 +128,7 @@ async def play_chords():
     global key
     global tension
     await play_chord(chord, delay)
-    while True:
+    while playing:
         offset = 0
         chord_options = len(chord.followups)
         if chord_options > 1:
@@ -119,8 +157,6 @@ async def play_chords():
 
         await play_chord(chord, delay)
 
-        if playing == False: break
-
 def play(loop: asyncio.EventLoop):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(play_chords())
@@ -136,7 +172,10 @@ def on_play_pause_press(button: Button):
         button.set_label("Start")
         playing = False
         # port.reset()
-        current_chord.base_widget.set_text("Currently playing: None") # type: ignore
+        current_chord.base_widget.set_text("Make sure Vital is open before playing!") # type: ignore
+        recent_chord_A.base_widget.set_text("^That^ will display the current chord") # type: ignore
+        recent_chord_B.base_widget.set_text("These will display the most recent chords") # type: ignore
+        recent_chord_C.base_widget.set_text("") # type: ignore
         
 def on_tension_press(button: Button):
     global tension_rising
@@ -204,6 +243,7 @@ palette = [
     ('recent', 'dark gray',  'default'),
 ]
 
+on_play_pause_press(play_pause_button)
 main_loop = MainLoop(main, palette = palette, unhandled_input = lambda key: stop() if key in ('q', 'Q') else None).run()
 
 port.reset()
