@@ -7,7 +7,7 @@
 3. Open Vital, click the ≡ icon, and select "Open External Preset"
 4. Navigate to the repository and select "autoambience.vital"
 
-To use, you can either run "pip install -r requirements.txt" in the repository and then run "main.py" or use one of the executables included in the release (sorry Mac users, I don't have one to compile on)
+To use, you can either run "pip install -r requirements.txt" in the repository and then run "main.py" or use one of the executables included in the release (sorry Mac users, I don't have one to compile on) (and Windows users, Windows doesn't like me and I don't like it either)
 
 Then program, relax, zone out, or do whatever to some infinite ambient music!
 
